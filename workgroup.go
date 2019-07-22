@@ -66,10 +66,9 @@ type _WorkGroup struct {
 	_Count   int
 	_First   error
 	_Results []error
+	_Waiting chan struct{}
 
 	_Defers []func(*error, []error)
-
-	_Closed chan struct{}
 }
 
 // Defer arranges for the given function, d, to be executed
@@ -177,6 +176,8 @@ func (wg *_WorkGroup) GoForPool(n, size int, f func(int) error) {
 		close(ch)
 	}()
 
+	wg._Count += n
+
 	erroffset := -1
 	if wg._Results != nil {
 		erroffset = len(wg._Results)
@@ -185,7 +186,6 @@ func (wg *_WorkGroup) GoForPool(n, size int, f func(int) error) {
 		}
 	}
 
-	wg._Count += n
 	for i := 0; i < size; i++ {
 		go func() {
 			for j := range ch {
@@ -249,16 +249,25 @@ func (wg *_WorkGroup) _Recover(err *error, erridx int) {
 	}
 
 	wg._Count--
-	if wg._Count == 0 {
+	if wg._Count == 0 && wg._Waiting != nil {
 		wg._Count = -1
-		close(wg._Closed)
-		wg._Cancel()
+		close(wg._Waiting)
 	}
 }
 
 func (wg *_WorkGroup) _Wait() ([]error, error) {
+	wg._Mut.Lock()
 
-	<-wg._Closed
+	if wg._Count == 0 {
+		wg._Count = -1
+		wg._Mut.Unlock()
+	} else {
+		wg._Waiting = make(chan struct{})
+		wg._Mut.Unlock()
+		<-wg._Waiting
+	}
+
+	wg._Cancel() // ensure context is canceled
 
 	first := wg._First
 	results := wg._Results
@@ -269,8 +278,8 @@ func (wg *_WorkGroup) _Wait() ([]error, error) {
 		}(d)
 	}
 
-	if first, ok := wg._First.(PanicError); ok {
-		panic(first.Recover())
+	if err, ok := first.(PanicError); ok {
+		panic(err.Recover())
 	}
 
 	return results, first
@@ -294,10 +303,9 @@ func All(parent context.Context, f func(Context)) error {
 
 	wg := &_WorkGroup{
 		Context: ctx,
-		_Mut:   sync.Mutex{},
+		_Mut:    sync.Mutex{},
 		_CMode:  _AllCancelMode,
 		_Cancel: cancel,
-		_Closed: make(chan struct{}),
 	}
 
 	wg._Setup(f)
@@ -325,10 +333,9 @@ func First(parent context.Context, w func(Context)) error {
 
 	wg := &_WorkGroup{
 		Context: ctx,
-		_Mut:   sync.Mutex{},
+		_Mut:    sync.Mutex{},
 		_CMode:  _FirstCancelMode,
 		_Cancel: cancel,
-		_Closed: make(chan struct{}),
 	}
 
 	wg._Setup(w)
@@ -358,10 +365,9 @@ func AllWithErrors(parent context.Context, w func(Context)) ([]error, error) {
 
 	wg := &_WorkGroup{
 		Context:  ctx,
-		_Mut:    sync.Mutex{},
+		_Mut:     sync.Mutex{},
 		_CMode:   _AllCancelMode,
 		_Cancel:  cancel,
-		_Closed: make(chan struct{}),
 		_Results: results,
 	}
 
@@ -390,10 +396,9 @@ func FirstWithErrors(parent context.Context, w func(Context)) ([]error, error) {
 
 	wg := &_WorkGroup{
 		Context:  ctx,
-		_Mut:    sync.Mutex{},
+		_Mut:     sync.Mutex{},
 		_CMode:   _FirstCancelMode,
 		_Cancel:  cancel,
-		_Closed: make(chan struct{}),
 		_Results: results,
 	}
 
