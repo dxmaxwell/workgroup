@@ -4,18 +4,23 @@ package workgroup
 
 import (
 	"context"
-	"runtime"
 	"sync"
 )
+
+
+type WorkGroup interface {
+	Add(delta int)
+	Do(func() error)
+	Go(func() error)
+	Defer(func(*error))
+}
+
 
 // Context extends the standard context.Context to
 // provide methods for managing goroutine exection.
 type Context interface {
 	context.Context
-	Go(func() error)
-	GoFor(int, func(int) error)
-	GoForPool(int, int, func(int) error)
-	Defer(func(*error, []error))
+	WorkGroup
 }
 
 // PanicError captures the panic value of the goroutine.
@@ -26,50 +31,93 @@ type PanicError interface {
 	Recover() interface{}
 }
 
-type _WGPanicError struct {
+type _PanicError struct { 
 	Value interface{}
 }
 
 // Error provides a string version of the panic value.
-func (err *_WGPanicError) Error() string {
+func (err _PanicError) Error() string {
 	switch v := err.Value.(type) {
 	case string:
-		return v
+		return "panic error: " + v
 	case interface { String() string }:
-		return v.String()
+		return "panic error: " + v.String()
 	default:
-		return "unknown"
+		return "panic error: unknown"
 	}
 }
 
-func (err *_WGPanicError) Recover() interface{} {
+func (err _PanicError) Recover() interface{} {
 	return err.Value
 }
 
-type _WGCancelMode int
+type _CancelMode int
 
 const (
-	_AllCancelMode   = _WGCancelMode(iota)
-	_FirstCancelMode = _WGCancelMode(iota)
+	_CancelModeAll   = _CancelMode(iota)
+	_CancelModeFirst = _CancelMode(iota)
 )
 
-const _WGClosedPanic = "workgroup closed"
+const (
+	_PanicClosed = "workgroup closed"
+	_PanicCounter = "workgroup negative count"
+)
+func _MustReturn(f func() error) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = _PanicError{v}
+		}
+	}()
+	return f()
+}
 
 type _WorkGroup struct {
 	context.Context
-
-	_Mut sync.Mutex
-
-	_CMode  _WGCancelMode
+	_CMode _CancelMode
 	_Cancel context.CancelFunc
 
-	_Count   int
-	_First   error
-	_Results []error
-	_Waiting chan struct{}
-
-	_Defers []func(*error, []error)
+	_Cond *sync.Cond
+	_Count int
+	_Error error
+	_Defers []func(*error)
 }
+
+
+func _New(parent context.Context, cmode _CancelMode) *_WorkGroup {
+	if (parent == nil) {
+		parent = context.Background()
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+
+	wtx := &_WorkGroup{
+		Context: ctx,
+		_Cond: sync.NewCond(&sync.Mutex{}),
+		_CMode: cmode,
+		_Cancel: cancel,
+	}
+
+	return wtx
+}
+
+
+// Add adds delta to the workgroup counter, if the value of
+// delta causes the counter to become less than zero, then 
+// this function will panic. If the workgroup is closed
+// then this function will panic.
+func (wg *_WorkGroup) Add(delta int) {
+	wg._Cond.L.Lock()
+	defer wg._Cond.L.Unlock()
+
+	if wg._Count < 0 {
+		panic(_PanicClosed) // TODO: "misuse"
+	}
+	if wg._Count + delta < 0 {
+		panic(_PanicCounter)
+	}
+	wg._Count += delta
+}
+
 
 // Defer arranges for the given function, d, to be executed
 // after all goroutines within the workgroup have completed.
@@ -78,331 +126,108 @@ type _WorkGroup struct {
 // registered. The final error value of the workgroup can be
 // modified within the deferred function by modifying the 
 // err argument.
-func (wg *_WorkGroup) Defer(d func(*error, []error)) {
-	wg._Mut.Lock()
-	defer wg._Mut.Unlock()
+func (wg *_WorkGroup) Defer(d func(err *error)) {
+	wg._Cond.L.Lock()
+	defer wg._Cond.L.Unlock()
 
 	if wg._Count < 0 {
-		panic(_WGClosedPanic)
+		panic(_PanicClosed)
 	}
 
 	wg._Defers = append(wg._Defers, d)
 }
 
-// Go arranges for the worker funtion, w, to be executed in a goroutine.
-func (wg *_WorkGroup) Go(w func() error) {
-	wg._Mut.Lock()
-	defer wg._Mut.Unlock()
+// Do calls the given function, w, captures the returned error
+// and upon completion decrements the workgroup count.
+func (wg *_WorkGroup) Do(w func() error) {
+	err := _MustReturn(w)
 
-	if wg._Count < 0 {
-		panic(_WGClosedPanic)
-	}
+	wg._Cond.L.Lock()
+	defer wg._Cond.L.Unlock()
 
-	wg._Count++
-
-	erridx := -1
-	if wg._Results != nil {
-		erridx = len(wg._Results)
-		wg._Results = append(wg._Results, nil)
-	}
-
-	go func() {
-		var err error
-		defer wg._Recover(&err, erridx)
-		err = w()
-	}()
-}
-
-// GoFor arranges for the worker function, w, to be executed on n goroutines.
-func (wg *_WorkGroup) GoFor(n int, w func(int) error) {
-	if n <= 0 {
-		return
-	}
-
-	wg._Mut.Lock()
-	defer wg._Mut.Unlock()
-
-	if wg._Count < 0 {
-		panic(_WGClosedPanic)
-	}
-
-	for i := 0; i < n; i++ {
-		wg._Count++
-
-		erridx := -1
-		if wg._Results != nil {
-			erridx = len(wg._Results)
-			wg._Results = append(wg._Results, nil)
-		}
-
-		go func(idx int) {
-			var err error
-			defer wg._Recover(&err, erridx)
-			err = w(idx)
-		}(i)
-	}
-}
-
-// GoForPool arranges for worker function, w, to be executed n times using a pool of goroutines.
-// If the pool size is <=0 then the default size is used.
-func (wg *_WorkGroup) GoForPool(n, size int, f func(int) error) {
-	if size <= 0 {
-		// Look for value in context!
-		size = runtime.NumCPU()
-	}
-
-	if size >= n {
-		wg.GoFor(n, f)
-		return
-	}
-
-	if n <= 0 {
-		return
-	}
-
-	wg._Mut.Lock()
-	defer wg._Mut.Unlock()
-
-	if wg._Count < 0 {
-		panic(_WGClosedPanic)
-	}
-
-	ch := make(chan int, size)
-
-	go func() {
-		for i := 0; i < n; i++ {
-			ch <- i
-		}
-		close(ch)
-	}()
-
-	wg._Count += n
-
-	erroffset := -1
-	if wg._Results != nil {
-		erroffset = len(wg._Results)
-		for i := 0; i < n; i++ {
-			wg._Results = append(wg._Results, nil)
-		}
-	}
-
-	for i := 0; i < size; i++ {
-		go func() {
-			for j := range ch {
-				func(idx int) {
-					erridx := -1
-					if erroffset >= 0 {
-						erridx = idx + erroffset
-					}
-					var err error
-					defer wg._Recover(&err, erridx)
-					err = f(idx)
-				}(j)
-			}
-		}()
-	}
-}
-
-func (wg *_WorkGroup) _Setup(f func(Context)) {
-	defer func() {
-		if v := recover(); v != nil {
-			wg._Mut.Lock()
-			defer wg._Mut.Unlock()
-			if _, ok := wg._First.(PanicError); !ok {
-				wg._First = &_WGPanicError{v}
-				wg._Cancel()
-			}
-		}
-	}()
-
-	f(wg)
-}
-
-func (wg *_WorkGroup) _Recover(err *error, erridx int) {
-	// fmt.Println("RECOVER")
-	wg._Mut.Lock()
-	defer wg._Mut.Unlock()
-
-	if v := recover(); v != nil {
-		if erridx >= 0 {
-			wg._Results[erridx] = &_WGPanicError{v}
-		}
-		if _, ok := wg._First.(PanicError); !ok {
-			if erridx >= 0 {
-				wg._First = wg._Results[erridx]
-			} else {
-				wg._First = &_WGPanicError{v}
-			}
-		}
+	if wg._Error == nil {
+		wg._Error = err
 		wg._Cancel()
-	} else if err != nil {
-		if erridx >= 0 {
-			wg._Results[erridx] = *err
-		}
-		if wg._First == nil {
-			// fmt.Println("Store Error Result")
-			wg._First = *err
-		}
-		wg._Cancel()
-	} else if wg._CMode == _FirstCancelMode {
+	} else if (wg._CMode == _CancelModeFirst) {
 		wg._Cancel()
 	}
 
 	wg._Count--
-	if wg._Count == 0 && wg._Waiting != nil {
-		wg._Count = -1
-		close(wg._Waiting)
-	}
-}
-
-func (wg *_WorkGroup) _Wait() ([]error, error) {
-	wg._Mut.Lock()
-
 	if wg._Count == 0 {
-		wg._Count = -1
-		wg._Mut.Unlock()
-	} else {
-		wg._Waiting = make(chan struct{})
-		wg._Mut.Unlock()
-		<-wg._Waiting
+		wg._Cond.Signal()
 	}
-
-	wg._Cancel() // ensure context is canceled
-
-	first := wg._First
-	results := wg._Results
-
-	for _, d := range wg._Defers {
-		defer func(f func(*error, []error)) {
-			f(&first, results)
-		}(d)
-	}
-
-	if err, ok := first.(PanicError); ok {
-		panic(err.Recover())
-	}
-
-	return results, first
 }
+
+func (wg *_WorkGroup) Go(w func() error) {
+	wg.Add(1)
+	wg.Do(w)
+}
+
 
 // All creates a new workgroup based on the provided parent Context,
 // (which can be nil) and executes configuration function, f. The 
 // workgroup Context is cancelled when the parent Context is canceled,
 // a worker function returns an error, a worker function panics,
 // the configuration function panics, or all worker functions have completed.
-func All(parent context.Context, f func(Context)) error {
-	if f == nil {
+func All(parent context.Context, init func(wtx Context)) error {
+	if (init == nil) {
 		return nil
 	}
 
-	if parent == nil {
-		parent = context.Background()
-	}
+	wtx := _New(parent, _CancelModeAll)
 
-	ctx, cancel := context.WithCancel(parent)
+	_Init(wtx, init)
 
-	wg := &_WorkGroup{
-		Context: ctx,
-		_Mut:    sync.Mutex{},
-		_CMode:  _AllCancelMode,
-		_Cancel: cancel,
-	}
-
-	wg._Setup(f)
-
-	_, err := wg._Wait()
-
-	return err
+	return _Wait(wtx)
 }
+
 
 // First creates a new workgroup based on the provided parent Context,
 // (which can be nil) and executes configuration function, f. The 
 // workgroup Context is cancelled when the parent Context is canceled,
 // a worker function returns an error, a worker function panics,
 // the configuration function panics, or the first worker function completes.
-func First(parent context.Context, w func(Context)) error {
+func First(parent context.Context, w func(wtx Context)) error {
 	if w == nil {
 		return nil
 	}
 
-	if parent == nil {
-		parent = context.Background()
-	}
+	wtx := _New(parent, _CancelModeFirst)
 
-	ctx, cancel := context.WithCancel(parent)
+	_Init(wtx, w)
 
-	wg := &_WorkGroup{
-		Context: ctx,
-		_Mut:    sync.Mutex{},
-		_CMode:  _FirstCancelMode,
-		_Cancel: cancel,
-	}
-
-	wg._Setup(w)
-
-	_, err := wg._Wait()
-
-	return err
+	return _Wait(wtx)
 }
 
-// AllWithErrors creates a new workgroup based on the provided parent Context,
-// (which can be nil) and executes configuration function, f. The 
-// workgroup Context is cancelled when the parent Context is canceled,
-// a worker function returns an error, a worker function panics,
-// the configuration function panics, or all worker functions have completed.
-func AllWithErrors(parent context.Context, w func(Context)) ([]error, error) {
-	results := []error{}
-	
-	if w == nil {
-		return results, nil
-	}
 
-	if parent == nil {
-		parent = context.Background()
-	}
-
-	ctx, cancel := context.WithCancel(parent)
-
-	wg := &_WorkGroup{
-		Context:  ctx,
-		_Mut:     sync.Mutex{},
-		_CMode:   _AllCancelMode,
-		_Cancel:  cancel,
-		_Results: results,
-	}
-
-	wg._Setup(w)
-
-	return wg._Wait()
+func _Init(wtx *_WorkGroup, init func(Context)) {
+	wtx.Add(1)
+	// hijack the current goroutine
+	wtx.Do(func() error {
+		init(wtx)
+		return nil
+	})
 }
 
-// FirstWithErrors creates a new workgroup based on the provided parent Context,
-// (which can be nil) and executes configuration function, f. The 
-// workgroup Context is cancelled when the parent Context is canceled,
-// a worker function returns an error, a worker function panics,
-// the configuration function panics, or the first worker function completes.
-func FirstWithErrors(parent context.Context, w func(Context)) ([]error, error) {
-	results := []error{}
-	
-	if w == nil {
-		return results, nil
+func _Wait(wtx *_WorkGroup) (err error) { 
+	wtx._Cond.L.Lock()
+	for wtx._Count > 0 {
+		wtx._Cond.Wait()
 	}
 
-	if parent == nil {
-		parent = context.Background()
+	err = wtx._Error
+	wtx._Count = -1
+	wtx._Cancel()
+
+	for _, d := range wtx._Defers {
+		defer func(f func(*error)) {
+			f(&err)
+		}(d)
 	}
 
-	ctx, cancel := context.WithCancel(parent)
+	wtx._Cond.L.Unlock()
 
-	wg := &_WorkGroup{
-		Context:  ctx,
-		_Mut:     sync.Mutex{},
-		_CMode:   _FirstCancelMode,
-		_Cancel:  cancel,
-		_Results: results,
+	if err, ok := err.(PanicError); ok {
+		panic(err.Recover())
 	}
-
-	wg._Setup(w)
-
-	return wg._Wait()
 }
