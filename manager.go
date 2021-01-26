@@ -2,7 +2,7 @@ package workgroup
 
 import "sync/atomic"
 
-var DefaultManager = CancelNever
+var DefaultManager = CancelNeverFirstError
 
 type Canceller interface {
 	Cancel()
@@ -115,7 +115,7 @@ type neverFirstError struct {
 	nerr   uint64
 }
 
-func CancelNever() Manager {
+func CancelNeverFirstError() Manager {
 	return &neverFirstError{}
 }
 

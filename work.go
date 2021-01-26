@@ -9,7 +9,9 @@ type Ctx = context.Context
 
 type Worker func(Ctx) error
 
-func Work(ctx Ctx, e Executer, m Manager, ws ...Worker) error {
+type WorkerIdx func(Ctx, int) error
+
+func Work(ctx Ctx, e Executer, m Manager, g ...Worker) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -27,8 +29,8 @@ func Work(ctx Ctx, e Executer, m Manager, ws ...Worker) error {
 
 	wg := &sync.WaitGroup{}
 
-	wg.Add(len(ws))
-	for _, w := range ws {
+	wg.Add(len(g))
+	for _, w := range g {
 		worker := w
 		e.Execute(func() {
 			defer wg.Done()
@@ -50,9 +52,13 @@ func Work(ctx Ctx, e Executer, m Manager, ws ...Worker) error {
 	return m.Result()
 }
 
-type WorkerIdx func(Ctx, int) error
+func Group(e Executer, m Manager, g ...Worker) Worker {
+	return func(ctx Ctx) error {
+		return Work(ctx, e, m, g...)
+	}
+}
 
-func WorkFor(ctx Ctx, n int, e Executer, m Manager, w WorkerIdx) error {
+func WorkFor(ctx Ctx, n int, e Executer, m Manager, g WorkerIdx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -81,7 +87,7 @@ func WorkFor(ctx Ctx, n int, e Executer, m Manager, w WorkerIdx) error {
 				m.Manage(ctx, CancellerFunc(cancel), err)
 			}()
 
-			err = w(ctx, index)
+			err = g(ctx, index)
 		})
 	}
 
@@ -93,13 +99,13 @@ func WorkFor(ctx Ctx, n int, e Executer, m Manager, w WorkerIdx) error {
 	return m.Result()
 }
 
-func For(n int, e Executer, m Manager, w WorkerIdx) Worker {
+func GroupFor(n int, e Executer, m Manager, g WorkerIdx) Worker {
 	return func(ctx Ctx) error {
-		return WorkFor(ctx, n, e, m, w)
+		return WorkFor(ctx, n, e, m, g)
 	}
 }
 
-func WorkChan(ctx Ctx, e Executer, m Manager, ws <-chan Worker) error {
+func WorkChan(ctx Ctx, e Executer, m Manager, g <-chan Worker) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -117,7 +123,7 @@ func WorkChan(ctx Ctx, e Executer, m Manager, ws <-chan Worker) error {
 
 	wg := &sync.WaitGroup{}
 
-	for w := range ws {
+	for w := range g {
 		wg.Add(1)
 		worker := w
 		e.Execute(func() {
@@ -140,8 +146,8 @@ func WorkChan(ctx Ctx, e Executer, m Manager, ws <-chan Worker) error {
 	return m.Result()
 }
 
-func Chan(e Executer, m Manager, ws <-chan Worker) Worker {
+func GroupChan(e Executer, m Manager, g <-chan Worker) Worker {
 	return func(ctx Ctx) error {
-		return WorkChan(ctx, e, m, ws)
+		return WorkChan(ctx, e, m, g)
 	}
 }
