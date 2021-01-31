@@ -2,18 +2,23 @@ package workgroup
 
 import "sync/atomic"
 
+// DefaultManager is a function that provides the default manager
 var DefaultManager = CancelNeverFirstError
 
+// Canceller allows a context to be cancelled.
 type Canceller interface {
 	Cancel()
 }
 
+// CancellerFunc is a function that implements the Canceller interface.
 type CancellerFunc func()
 
+// Cancel calls the underlying function to cancel
 func (c CancellerFunc) Cancel() {
 	c()
 }
 
+// Manager provides a interface for management of a work group.
 type Manager interface {
 	Manage(ctx Ctx, c Canceller, err error)
 	Result() error
@@ -24,6 +29,9 @@ type firstError struct {
 	nerr   uint64
 }
 
+// CancelOnFirstError initilizes a manager that
+// cancels the work group context when a worker
+// completes with an error.
 func CancelOnFirstError() Manager {
 	return &firstError{}
 }
@@ -48,6 +56,10 @@ type firstSuccess struct {
 	nerrscs uint64
 }
 
+// CancelOnFirstSuccess initializes a manager that
+// that cancels the work group context when a worker
+// completes without error. If all workers complete
+// with an error, then the first error is returned.
 func CancelOnFirstSuccess() Manager {
 	return &firstSuccess{}
 }
@@ -67,9 +79,9 @@ func (s *firstSuccess) Manage(ctx Ctx, c Canceller, err error) {
 		nerr = nerrscs & 0xFF00
 		nscs = (nerrscs & 0x00FF) << 32
 		if err != nil {
-			nerr += 1
+			nerr++
 		} else {
-			nscs += 1
+			nscs++
 		}
 
 		if atomic.CompareAndSwapUint64(&s.nerrscs, nerrscs, nerr|(nscs>>32)) {
@@ -94,7 +106,10 @@ type firstDone struct {
 	ndone  uint64
 }
 
-func CancelOnFirstDone() Manager {
+// CancelOnFirstComplete initializes a new manager that
+// cancels the work group context when a worker completes
+// with or with an error.
+func CancelOnFirstComplete() Manager {
 	return &firstDone{}
 }
 
@@ -115,6 +130,9 @@ type neverFirstError struct {
 	nerr   uint64
 }
 
+// CancelNeverFirstError initializes a new manager never
+// cancels the work group context, but will return the
+// error from the first worker that completes with an error.
 func CancelNeverFirstError() Manager {
 	return &neverFirstError{}
 }
