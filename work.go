@@ -13,7 +13,7 @@ type WorkerIdx func(Ctx, int) error
 
 func Work(ctx Ctx, e Executer, m Manager, g ...Worker) error {
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = context.TODO()
 	}
 
 	if e == nil {
@@ -60,7 +60,7 @@ func Group(e Executer, m Manager, g ...Worker) Worker {
 
 func WorkFor(ctx Ctx, n int, e Executer, m Manager, g WorkerIdx) error {
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = context.TODO()
 	}
 
 	if e == nil {
@@ -107,7 +107,7 @@ func GroupFor(n int, e Executer, m Manager, g WorkerIdx) Worker {
 
 func WorkChan(ctx Ctx, e Executer, m Manager, g <-chan Worker) error {
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = context.TODO()
 	}
 
 	if e == nil {
