@@ -19,11 +19,11 @@ func TestSimpleWork(t *testing.T) {
 		}
 	}
 
-	Work(nil, nil, nil, workers...)
+	Work(context.Background(), NewUnlimited(), CancelNeverFirstError(), workers...)
 
 	for _, c := range counts {
 		if c != 1 {
-			t.Fail()
+			t.Errorf("Worker %d has not completed", c)
 		}
 	}
 }
@@ -32,15 +32,17 @@ func TestSimpleWorkFor(t *testing.T) {
 
 	counts := make([]int, 10000)
 
-	WorkFor(nil, len(counts), nil, nil, func(ctx Ctx, index int) error {
-		time.Sleep(time.Millisecond)
-		counts[index]++
-		return nil
-	})
+	WorkFor(context.Background(), len(counts), NewUnlimited(), CancelNeverFirstError(),
+		func(ctx Ctx, index int) error {
+			time.Sleep(time.Millisecond)
+			counts[index]++
+			return nil
+		},
+	)
 
 	for _, c := range counts {
 		if c != 1 {
-			t.Fail()
+			t.Errorf("Worker %d has not completed", c)
 		}
 	}
 }
@@ -61,11 +63,11 @@ func TestSimpleWorkChan(t *testing.T) {
 		close(workers)
 	}()
 
-	WorkChan(nil, nil, nil, workers)
+	WorkChan(context.Background(), NewUnlimited(), CancelNeverFirstError(), workers)
 
 	for _, c := range counts {
 		if c != 1 {
-			t.Fail()
+			t.Errorf("Worker %d has not completed", c)
 		}
 	}
 }
@@ -75,30 +77,32 @@ func TestLimitedWorkFor(t *testing.T) {
 	counts := make([]int, 10000)
 	tokens := make(chan struct{}, 8)
 
-	WorkFor(nil, len(counts), NewLimited(8), nil, func(ctx Ctx, index int) error {
-		select {
-		case tokens <- struct{}{}:
-			break
-		default:
-			t.Fail()
-		}
+	WorkFor(context.Background(), len(counts), NewLimited(8), CancelNeverFirstError(),
+		func(ctx Ctx, index int) error {
+			select {
+			case tokens <- struct{}{}:
+				break
+			default:
+				t.Errorf("Worker %d must wait to send token", index)
+			}
 
-		time.Sleep(time.Millisecond)
-		counts[index]++
+			time.Sleep(time.Millisecond)
+			counts[index]++
 
-		select {
-		case <-tokens:
-			break
-		default:
-			t.Fail()
-		}
+			select {
+			case <-tokens:
+				break
+			default:
+				t.Errorf("Worker %d must wait to recieve token", index)
+			}
 
-		return nil
-	})
+			return nil
+		},
+	)
 
 	for _, c := range counts {
 		if c != 1 {
-			t.Fail()
+			t.Errorf("Work %d has not completed", c)
 		}
 	}
 }
@@ -110,32 +114,34 @@ func TestPoolWorkFor(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	WorkFor(nil, len(counts), NewPool(ctx, 8), nil, func(ctx Ctx, index int) error {
-		select {
-		case tokens <- struct{}{}:
-			break
-		default:
-			t.Fail()
-		}
+	WorkFor(ctx, len(counts), NewPool(ctx, 8), CancelNeverFirstError(),
+		func(ctx Ctx, index int) error {
+			select {
+			case tokens <- struct{}{}:
+				break
+			default:
+				t.Errorf("Worker %d must wait to send token", index)
+			}
 
-		time.Sleep(time.Millisecond)
-		counts[index]++
+			time.Sleep(time.Millisecond)
+			counts[index]++
 
-		select {
-		case <-tokens:
-			break
-		default:
-			t.Fail()
-		}
+			select {
+			case <-tokens:
+				break
+			default:
+				t.Errorf("Worker %d must wait to recieve token", index)
+			}
 
-		return nil
-	})
+			return nil
+		},
+	)
 
 	cancel()
 
 	for _, c := range counts {
 		if c != 1 {
-			t.Fail()
+			t.Errorf("Work %d has not completed", c)
 		}
 	}
 }
