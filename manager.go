@@ -1,32 +1,37 @@
 package workgroup
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
-// DefaultManager is a function that provides the default manager
+// DefaultManager is a function that provides the default manager.
 var DefaultManager = CancelNeverFirstError
 
-// Canceller allows a context to be cancelled.
+// Canceller cancels the work context.
 type Canceller interface {
 	Cancel()
 }
 
-// CancellerFunc is a function that implements the Canceller interface.
+// CancellerFunc is a function type that implements the Canceller interface.
 type CancellerFunc func()
 
-// Cancel calls the underlying function to cancel
+// Cancel calls the underlying function to cancel.
 func (c CancellerFunc) Cancel() {
 	c()
 }
 
-// Manager provides a interface for management of a work group.
+// Manager provides an interface for management of a work group.
 type Manager interface {
 	Manage(ctx Ctx, c Canceller, err error)
 	Result() error
 }
 
 type firstError struct {
-	result error
-	nerr   uint64
+	mutex     sync.Mutex
+	ncomplete int
+	nerror    int
+	result    error
 }
 
 // CancelOnFirstError initilizes a manager that
@@ -37,13 +42,19 @@ func CancelOnFirstError() Manager {
 }
 
 func (s *firstError) Result() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	return s.result
 }
 
 func (s *firstError) Manage(ctx Ctx, c Canceller, err error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.ncomplete++
 	if err != nil {
-		nerr := atomic.AddUint64(&s.nerr, 1)
-		if nerr == 1 {
+		s.nerror++
+		if s.nerror == 1 {
 			s.result = err
 			c.Cancel()
 		}
@@ -51,9 +62,10 @@ func (s *firstError) Manage(ctx Ctx, c Canceller, err error) {
 }
 
 type firstSuccess struct {
-	result  error
-	success bool
-	nerrscs uint64
+	mutex    sync.Mutex
+	nsuccess int
+	nerror   int
+	result   error
 }
 
 // CancelOnFirstSuccess initializes a manager that
@@ -65,45 +77,33 @@ func CancelOnFirstSuccess() Manager {
 }
 
 func (s *firstSuccess) Result() error {
-	if !s.success {
-		return s.result
-	}
-	return nil
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.result
 }
 
 func (s *firstSuccess) Manage(ctx Ctx, c Canceller, err error) {
-	var nerr uint64
-	var nscs uint64
-	for {
-		nerrscs := atomic.LoadUint64(&s.nerrscs)
-		nerr = nerrscs & 0xFF00
-		nscs = (nerrscs & 0x00FF) << 32
-		if err != nil {
-			nerr++
-		} else {
-			nscs++
-		}
-
-		if atomic.CompareAndSwapUint64(&s.nerrscs, nerrscs, nerr|(nscs>>32)) {
-			break
-		}
-	}
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
 	if err != nil {
-		if nerr == 1 {
+		s.nerror++
+		if s.nerror == 1 && s.nsuccess == 0 {
 			s.result = err
 		}
 	} else {
-		if nscs == 1 {
-			s.success = true
+		s.nsuccess++
+		if s.nsuccess == 1 {
+			s.result = nil
 			c.Cancel()
 		}
 	}
 }
 
 type firstDone struct {
-	result error
-	ndone  uint64
+	mutex     sync.Mutex
+	ncomplete int
+	result    error
 }
 
 // CancelOnFirstComplete initializes a new manager that
@@ -114,12 +114,17 @@ func CancelOnFirstComplete() Manager {
 }
 
 func (s *firstDone) Result() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	return s.result
 }
 
 func (s *firstDone) Manage(ctx Ctx, c Canceller, err error) {
-	ndone := atomic.AddUint64(&s.ndone, 1)
-	if ndone == 1 {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.ncomplete++
+	if s.ncomplete == 1 {
 		s.result = err
 		c.Cancel()
 	}
