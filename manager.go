@@ -2,7 +2,6 @@ package workgroup
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 // DefaultManager is a function that provides the default manager.
@@ -23,7 +22,7 @@ func (c CancellerFunc) Cancel() {
 
 // Manager provides an interface for management of a work group.
 type Manager interface {
-	Manage(ctx Ctx, c Canceller, err error)
+	Manage(ctx Ctx, c Canceller, err error) int
 	Result() error
 }
 
@@ -47,7 +46,7 @@ func (s *firstError) Result() error {
 	return s.result
 }
 
-func (s *firstError) Manage(ctx Ctx, c Canceller, err error) {
+func (s *firstError) Manage(ctx Ctx, c Canceller, err error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -59,6 +58,8 @@ func (s *firstError) Manage(ctx Ctx, c Canceller, err error) {
 			c.Cancel()
 		}
 	}
+
+	return s.ncomplete
 }
 
 type firstSuccess struct {
@@ -82,7 +83,7 @@ func (s *firstSuccess) Result() error {
 	return s.result
 }
 
-func (s *firstSuccess) Manage(ctx Ctx, c Canceller, err error) {
+func (s *firstSuccess) Manage(ctx Ctx, c Canceller, err error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -98,6 +99,8 @@ func (s *firstSuccess) Manage(ctx Ctx, c Canceller, err error) {
 			c.Cancel()
 		}
 	}
+
+	return s.nsuccess + s.nerror
 }
 
 type firstDone struct {
@@ -119,7 +122,7 @@ func (s *firstDone) Result() error {
 	return s.result
 }
 
-func (s *firstDone) Manage(ctx Ctx, c Canceller, err error) {
+func (s *firstDone) Manage(ctx Ctx, c Canceller, err error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -128,11 +131,14 @@ func (s *firstDone) Manage(ctx Ctx, c Canceller, err error) {
 		s.result = err
 		c.Cancel()
 	}
+
+	return s.ncomplete
 }
 
 type neverFirstError struct {
-	result error
-	nerr   uint64
+	mutex     sync.Mutex
+	ncomplete int
+	result    error
 }
 
 // CancelNeverFirstError initializes a new manager never
@@ -143,16 +149,23 @@ func CancelNeverFirstError() Manager {
 }
 
 func (m *neverFirstError) Result() error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 	return m.result
 }
 
-func (m *neverFirstError) Manage(ctx Ctx, c Canceller, err error) {
+func (m *neverFirstError) Manage(ctx Ctx, c Canceller, err error) int {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	m.ncomplete++
 	if err != nil {
-		nerr := atomic.AddUint64(&m.nerr, 1)
-		if nerr == 1 {
+		if m.result == nil {
 			m.result = err
 		}
 	}
+
+	return m.ncomplete
 }
 
 type panicError struct {
@@ -186,9 +199,9 @@ func (w *recoverWrapper) Result() error {
 	return w.m.Result()
 }
 
-func (w *recoverWrapper) Manage(ctx Ctx, c Canceller, err error) {
+func (w *recoverWrapper) Manage(ctx Ctx, c Canceller, err error) int {
 	if v := recover(); v != nil {
 		err = &panicError{v: v}
 	}
-	w.m.Manage(ctx, c, err)
+	return w.m.Manage(ctx, c, err)
 }
