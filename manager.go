@@ -22,7 +22,7 @@ func (c CancellerFunc) Cancel() {
 
 // Manager provides an interface for management of a work group.
 type Manager interface {
-	Manage(ctx Ctx, c Canceller, err error) int
+	Manage(ctx Ctx, c Canceller, idx int, err error) int
 	Result() error
 }
 
@@ -46,7 +46,7 @@ func (s *firstError) Result() error {
 	return s.result
 }
 
-func (s *firstError) Manage(ctx Ctx, c Canceller, err error) int {
+func (s *firstError) Manage(ctx Ctx, c Canceller, idx int, err error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -83,7 +83,7 @@ func (s *firstSuccess) Result() error {
 	return s.result
 }
 
-func (s *firstSuccess) Manage(ctx Ctx, c Canceller, err error) int {
+func (s *firstSuccess) Manage(ctx Ctx, c Canceller, idx int, err error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -122,7 +122,7 @@ func (s *firstDone) Result() error {
 	return s.result
 }
 
-func (s *firstDone) Manage(ctx Ctx, c Canceller, err error) int {
+func (s *firstDone) Manage(ctx Ctx, c Canceller, idx int, err error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -154,7 +154,7 @@ func (m *neverFirstError) Result() error {
 	return m.result
 }
 
-func (m *neverFirstError) Manage(ctx Ctx, c Canceller, err error) int {
+func (m *neverFirstError) Manage(ctx Ctx, c Canceller, idx int, err error) int {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -199,9 +199,9 @@ func (w *recoverWrapper) Result() error {
 	return w.m.Result()
 }
 
-func (w *recoverWrapper) Manage(ctx Ctx, c Canceller, err error) int {
+func (w *recoverWrapper) Manage(ctx Ctx, c Canceller, idx int, err error) int {
 	if v := recover(); v != nil {
 		err = &panicError{v: v}
 	}
-	return w.m.Manage(ctx, c, err)
+	return w.m.Manage(ctx, c, idx, err)
 }

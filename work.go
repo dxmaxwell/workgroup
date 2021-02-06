@@ -41,14 +41,15 @@ func Work(ctx Ctx, e Executer, m Manager, g ...Worker) error {
 	wg := &sync.WaitGroup{}
 
 	wg.Add(len(g))
-	for _, w := range g {
+	for i, w := range g {
+		index := i
 		worker := w
 		e.Execute(func() {
 			defer wg.Done()
 
 			var err error
 			defer func() {
-				m.Manage(ctx, CancellerFunc(cancel), err)
+				m.Manage(ctx, CancellerFunc(cancel), index, err)
 			}()
 
 			err = worker(ctx)
@@ -100,7 +101,7 @@ func WorkFor(ctx Ctx, n int, e Executer, m Manager, w WorkerIdx) error {
 
 			var err error
 			defer func() {
-				m.Manage(ctx, CancellerFunc(cancel), err)
+				m.Manage(ctx, CancellerFunc(cancel), index, err)
 			}()
 
 			err = w(ctx, index)
@@ -144,15 +145,18 @@ func WorkChan(ctx Ctx, e Executer, m Manager, g <-chan Worker) error {
 
 	wg := &sync.WaitGroup{}
 
+	i := 0
 	for w := range g {
 		wg.Add(1)
+		i++
+		index := i
 		worker := w
 		e.Execute(func() {
 			defer wg.Done()
 
 			var err error
 			defer func() {
-				m.Manage(ctx, CancellerFunc(cancel), err)
+				m.Manage(ctx, CancellerFunc(cancel), index, err)
 			}()
 
 			err = worker(ctx)
