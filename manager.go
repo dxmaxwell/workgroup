@@ -23,15 +23,21 @@ func (c CancellerFunc) Cancel() {
 
 // Manager provides an interface for management of a work group.
 type Manager interface {
+	// Manage controls the cancellation and overall error
+	// of the work group. The index of completed worker
+	// is provided along with its error. This function
+	// is expected to return the number of completed workers.
 	Manage(ctx Ctx, c Canceller, idx int, err *error) int
-	Result() error
+
+	// Error returns the final error of this work group.
+	Error() error
 }
 
 type firstError struct {
 	mutex     sync.Mutex
 	ncomplete int
 	nerror    int
-	result    error
+	err       error
 }
 
 // CancelOnFirstError initilizes a manager that
@@ -41,33 +47,33 @@ func CancelOnFirstError() Manager {
 	return &firstError{}
 }
 
-func (s *firstError) Result() error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.result
+func (m *firstError) Error() error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.err
 }
 
-func (s *firstError) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+func (m *firstError) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
-	s.ncomplete++
+	m.ncomplete++
 	if *err != nil {
-		s.nerror++
-		if s.nerror == 1 {
-			s.result = *err
+		m.nerror++
+		if m.nerror == 1 {
+			m.err = *err
 			c.Cancel()
 		}
 	}
 
-	return s.ncomplete
+	return m.ncomplete
 }
 
 type firstSuccess struct {
 	mutex    sync.Mutex
 	nsuccess int
 	nerror   int
-	result   error
+	err      error
 }
 
 // CancelOnFirstSuccess initializes a manager that
@@ -78,30 +84,30 @@ func CancelOnFirstSuccess() Manager {
 	return &firstSuccess{}
 }
 
-func (s *firstSuccess) Result() error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.result
+func (m *firstSuccess) Error() error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.err
 }
 
-func (s *firstSuccess) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+func (m *firstSuccess) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
 	if *err != nil {
-		s.nerror++
-		if s.nerror == 1 && s.nsuccess == 0 {
-			s.result = *err
+		m.nerror++
+		if m.nerror == 1 && m.nsuccess == 0 {
+			m.err = *err
 		}
 	} else {
-		s.nsuccess++
-		if s.nsuccess == 1 {
-			s.result = nil
+		m.nsuccess++
+		if m.nsuccess == 1 {
+			m.err = nil
 			c.Cancel()
 		}
 	}
 
-	return s.nsuccess + s.nerror
+	return m.nsuccess + m.nerror
 }
 
 type firstDone struct {
@@ -117,29 +123,29 @@ func CancelOnFirstComplete() Manager {
 	return &firstDone{}
 }
 
-func (s *firstDone) Result() error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.result
+func (m *firstDone) Error() error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.result
 }
 
-func (s *firstDone) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+func (m *firstDone) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
-	s.ncomplete++
-	if s.ncomplete == 1 {
-		s.result = *err
+	m.ncomplete++
+	if m.ncomplete == 1 {
+		m.result = *err
 		c.Cancel()
 	}
 
-	return s.ncomplete
+	return m.ncomplete
 }
 
 type neverFirstError struct {
 	mutex     sync.Mutex
 	ncomplete int
-	result    error
+	err       error
 }
 
 // CancelNeverFirstError initializes a new manager that never
@@ -149,10 +155,10 @@ func CancelNeverFirstError() Manager {
 	return &neverFirstError{}
 }
 
-func (m *neverFirstError) Result() error {
+func (m *neverFirstError) Error() error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	return m.result
+	return m.err
 }
 
 func (m *neverFirstError) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
@@ -161,14 +167,16 @@ func (m *neverFirstError) Manage(ctx Ctx, c Canceller, idx int, err *error) int 
 
 	m.ncomplete++
 	if *err != nil {
-		if m.result == nil {
-			m.result = *err
+		if m.err == nil {
+			m.err = *err
 		}
 	}
 
 	return m.ncomplete
 }
 
+// PanicError is an error that represents a recovered panic
+// and contains the value returned from a call to recover.
 type PanicError struct {
 	Value interface{}
 }
@@ -208,8 +216,8 @@ func Repanic(m Manager) Manager {
 	return &recoverWrapper{m: m, p: true}
 }
 
-func (w *recoverWrapper) Result() error {
-	err := w.m.Result()
+func (w *recoverWrapper) Error() error {
+	err := w.m.Error()
 	if w.p {
 		var perr *PanicError
 		if errors.As(err, &perr) {

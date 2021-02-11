@@ -55,7 +55,7 @@ func Work(ctx Ctx, e Executer, m Manager, g ...Worker) error {
 
 	wg.Wait()
 
-	return m.Result()
+	return m.Error()
 }
 
 // Group returns a worker that immediately calls the
@@ -101,7 +101,7 @@ func WorkFor(ctx Ctx, n int, e Executer, m Manager, w IdxWorker) error {
 
 	wg.Wait()
 
-	return m.Result()
+	return m.Error()
 }
 
 // GroupFor returns a worker that immediately calls the
@@ -150,7 +150,7 @@ func WorkChan(ctx Ctx, e Executer, m Manager, g <-chan Worker) error {
 
 	wg.Wait()
 
-	return m.Result()
+	return m.Error()
 }
 
 // GroupChan returns a worker that immediately calls
