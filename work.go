@@ -44,7 +44,7 @@ func Work(ctx Ctx, e Executer, m Manager, g ...Worker) error {
 	for i, w := range g {
 		index := i
 		worker := w
-		e.Execute(func() {
+		e.Execute(ctx, func(ctx Ctx) {
 			defer wg.Done()
 
 			var err error
@@ -90,7 +90,7 @@ func WorkFor(ctx Ctx, n int, e Executer, m Manager, w IdxWorker) error {
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		index := i
-		e.Execute(func() {
+		e.Execute(ctx, func(ctx Ctx) {
 			defer wg.Done()
 
 			var err error
@@ -139,7 +139,7 @@ func WorkChan(ctx Ctx, e Executer, m Manager, g <-chan Worker) error {
 		i++
 		index := i
 		worker := w
-		e.Execute(func() {
+		e.Execute(ctx, func(ctx Ctx) {
 			defer wg.Done()
 
 			var err error

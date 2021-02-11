@@ -14,7 +14,7 @@ var DefaultExecuter = NewUnlimited
 
 // Executer arranges for function, f, to executed.
 type Executer interface {
-	Execute(f func())
+	Execute(ctx Ctx, f func(ctx Ctx))
 }
 
 type unlimited struct{}
@@ -25,8 +25,8 @@ func NewUnlimited() Executer {
 	return &unlimited{}
 }
 
-func (u *unlimited) Execute(f func()) {
-	go f()
+func (u *unlimited) Execute(ctx Ctx, f func(Ctx)) {
+	go f(ctx)
 }
 
 type limited struct {
@@ -56,11 +56,11 @@ func (l *limited) done() {
 	<-l.ch
 }
 
-func (l *limited) Execute(f func()) {
+func (l *limited) Execute(ctx Ctx, f func(Ctx)) {
 	l.add()
 	go func() {
 		defer l.done()
-		f()
+		f(ctx)
 	}()
 }
 
@@ -102,6 +102,6 @@ func NewPool(ctx Ctx, n int) Executer {
 	return p
 }
 
-func (p *pool) Execute(f func()) {
-	p.ch <- f
+func (p *pool) Execute(ctx Ctx, f func(Ctx)) {
+	p.ch <- func() { f(ctx) }
 }
