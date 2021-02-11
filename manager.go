@@ -1,6 +1,7 @@
 package workgroup
 
 import (
+	"errors"
 	"sync"
 )
 
@@ -22,7 +23,7 @@ func (c CancellerFunc) Cancel() {
 
 // Manager provides an interface for management of a work group.
 type Manager interface {
-	Manage(ctx Ctx, c Canceller, idx int, err error) int
+	Manage(ctx Ctx, c Canceller, idx int, err *error) int
 	Result() error
 }
 
@@ -46,15 +47,15 @@ func (s *firstError) Result() error {
 	return s.result
 }
 
-func (s *firstError) Manage(ctx Ctx, c Canceller, idx int, err error) int {
+func (s *firstError) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	s.ncomplete++
-	if err != nil {
+	if *err != nil {
 		s.nerror++
 		if s.nerror == 1 {
-			s.result = err
+			s.result = *err
 			c.Cancel()
 		}
 	}
@@ -83,14 +84,14 @@ func (s *firstSuccess) Result() error {
 	return s.result
 }
 
-func (s *firstSuccess) Manage(ctx Ctx, c Canceller, idx int, err error) int {
+func (s *firstSuccess) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if err != nil {
+	if *err != nil {
 		s.nerror++
 		if s.nerror == 1 && s.nsuccess == 0 {
-			s.result = err
+			s.result = *err
 		}
 	} else {
 		s.nsuccess++
@@ -122,13 +123,13 @@ func (s *firstDone) Result() error {
 	return s.result
 }
 
-func (s *firstDone) Manage(ctx Ctx, c Canceller, idx int, err error) int {
+func (s *firstDone) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	s.ncomplete++
 	if s.ncomplete == 1 {
-		s.result = err
+		s.result = *err
 		c.Cancel()
 	}
 
@@ -141,9 +142,9 @@ type neverFirstError struct {
 	result    error
 }
 
-// CancelNeverFirstError initializes a new manager never
-// cancels the work group context, but will return the
-// error from the first worker that completes with an error.
+// CancelNeverFirstError initializes a new manager that never
+// cancels the work group context, but will return the error
+// from the first worker that completes with an error.
 func CancelNeverFirstError() Manager {
 	return &neverFirstError{}
 }
@@ -154,54 +155,73 @@ func (m *neverFirstError) Result() error {
 	return m.result
 }
 
-func (m *neverFirstError) Manage(ctx Ctx, c Canceller, idx int, err error) int {
+func (m *neverFirstError) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	m.ncomplete++
-	if err != nil {
+	if *err != nil {
 		if m.result == nil {
-			m.result = err
+			m.result = *err
 		}
 	}
 
 	return m.ncomplete
 }
 
-type panicError struct {
-	v interface{}
+type PanicError struct {
+	Value interface{}
 }
 
-func (e *panicError) Error() string {
-	switch v := e.v.(type) {
+func (e *PanicError) Error() string {
+	switch v := e.Value.(type) {
 	case string:
-		return "panic error: " + v
+		return "panic: " + v
 	case interface{ String() string }:
-		return "panic error: " + v.String()
+		return "panic: " + v.String()
 	default:
-		return "panic error: unknown"
+		return "panic: unknown"
 	}
 }
 
-func (e *panicError) Panic() {
-	panic(e.v)
-}
-
 type recoverWrapper struct {
+	p bool
 	m Manager
 }
 
+// Recover wraps a Manager, m, and if a worker
+// panics during execution this wrapper will
+// recover and create an instance of PanicError
+// which will passed to the wrapped manager.
 func Recover(m Manager) Manager {
-	return &recoverWrapper{m: m}
+	return &recoverWrapper{m: m, p: false}
+}
+
+// Repanic wraps a Manager, m, and if a worker
+// panics during execution this wrapper will
+// recover and create an instance of PanicError
+// which will be passed to the wrapped manager.
+// If the result of the wrapped manager is
+// an instance of PanicError, then this wapper
+// will panic when accessing the result.
+func Repanic(m Manager) Manager {
+	return &recoverWrapper{m: m, p: true}
 }
 
 func (w *recoverWrapper) Result() error {
-	return w.m.Result()
+	err := w.m.Result()
+	if w.p {
+		var perr *PanicError
+		if errors.As(err, &perr) {
+			panic(perr.Value)
+		}
+	}
+	return err
 }
 
-func (w *recoverWrapper) Manage(ctx Ctx, c Canceller, idx int, err error) int {
+func (w *recoverWrapper) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
 	if v := recover(); v != nil {
-		err = &panicError{v: v}
+		*err = &PanicError{Value: v}
 	}
 	return w.m.Manage(ctx, c, idx, err)
 }

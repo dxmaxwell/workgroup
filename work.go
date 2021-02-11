@@ -15,13 +15,13 @@ type Worker func(Ctx) error
 type IdxWorker func(Ctx, int) error
 
 // Work arranges for a group of workers to be executed
-// and waits for these workers to complete before returning.
-// The executer, e, responsible for executing these workers
+// and then waits for these workers to complete.
+// The executer, e, is responsible for executing these workers
 // with various levels of concurrancy. The manager, m, determines
-// when the context will be cancelled and which error is returned.
-// If executer, e, is not provided then the DefaultExecuter() function
+// when the context will be canceled and which error is returned.
+// If executer, e, is not provided then DefaultExecuter
 // is called for obtain the default. If manager, m, is not provied
-// then function DefaultManager() is called be obtain the default manager.
+// then DefaultManager is called be obtain the default manager.
 func Work(ctx Ctx, e Executer, m Manager, g ...Worker) error {
 	if ctx == nil {
 		ctx = context.TODO()
@@ -48,19 +48,13 @@ func Work(ctx Ctx, e Executer, m Manager, g ...Worker) error {
 			defer wg.Done()
 
 			var err error
-			defer func() {
-				m.Manage(ctx, CancellerFunc(cancel), index, err)
-			}()
-
+			defer m.Manage(ctx, CancellerFunc(cancel), index, &err)
 			err = worker(ctx)
 		})
 	}
 
 	wg.Wait()
 
-	if r, ok := m.Result().(interface{ Panic() }); ok {
-		r.Panic()
-	}
 	return m.Result()
 }
 
@@ -100,19 +94,13 @@ func WorkFor(ctx Ctx, n int, e Executer, m Manager, w IdxWorker) error {
 			defer wg.Done()
 
 			var err error
-			defer func() {
-				m.Manage(ctx, CancellerFunc(cancel), index, err)
-			}()
-
+			defer m.Manage(ctx, CancellerFunc(cancel), index, &err)
 			err = w(ctx, index)
 		})
 	}
 
 	wg.Wait()
 
-	if r, ok := m.Result().(interface{ Panic() }); ok {
-		r.Panic()
-	}
 	return m.Result()
 }
 
@@ -155,19 +143,13 @@ func WorkChan(ctx Ctx, e Executer, m Manager, g <-chan Worker) error {
 			defer wg.Done()
 
 			var err error
-			defer func() {
-				m.Manage(ctx, CancellerFunc(cancel), index, err)
-			}()
-
+			defer m.Manage(ctx, CancellerFunc(cancel), index, &err)
 			err = worker(ctx)
 		})
 	}
 
 	wg.Wait()
 
-	if r, ok := m.Result().(interface{ Panic() }); ok {
-		r.Panic()
-	}
 	return m.Result()
 }
 

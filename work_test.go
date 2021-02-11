@@ -21,7 +21,7 @@ func TestSimpleWork(t *testing.T) {
 		}
 	}
 
-	Work(context.Background(), NewUnlimited(), CancelNeverFirstError(), workers...)
+	Work(nil, nil, nil, workers...)
 
 	for _, c := range counts {
 		if c != 1 {
@@ -34,7 +34,7 @@ func TestSimpleWorkFor(t *testing.T) {
 
 	counts := make([]int, 10000)
 
-	WorkFor(context.Background(), len(counts), NewUnlimited(), CancelNeverFirstError(),
+	WorkFor(nil, len(counts), nil, nil,
 		func(ctx Ctx, index int) error {
 			time.Sleep(time.Millisecond)
 			counts[index]++
@@ -65,7 +65,7 @@ func TestSimpleWorkChan(t *testing.T) {
 		close(workers)
 	}()
 
-	WorkChan(context.Background(), NewUnlimited(), CancelNeverFirstError(), workers)
+	WorkChan(nil, nil, nil, workers)
 
 	for _, c := range counts {
 		if c != 1 {
@@ -158,7 +158,7 @@ func (m *AccumulateManager) Result() error {
 	return m.manager.Result()
 }
 
-func (m *AccumulateManager) Manage(ctx Ctx, c Canceller, idx int, err error) int {
+func (m *AccumulateManager) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
 	n := m.manager.Manage(ctx, c, idx, err)
 
 	m.mutex.Lock()
@@ -167,7 +167,7 @@ func (m *AccumulateManager) Manage(ctx Ctx, c Canceller, idx int, err error) int
 	for len(m.Errors) < n {
 		m.Errors = append(m.Errors, nil)
 	}
-	m.Errors[n-1] = err
+	m.Errors[n-1] = *err
 
 	return n
 }
@@ -371,4 +371,87 @@ func TestCancelOnFirstComplete(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestRecoverManager(t *testing.T) {
+
+	counts := make([]int, 10000)
+
+	m := Recover(CancelOnFirstError())
+
+	err := WorkFor(context.Background(), len(counts), NewUnlimited(), m,
+		func(ctx Ctx, index int) (err error) {
+			time.Sleep(time.Millisecond)
+			counts[index]++
+
+			if index == 500 {
+				panic(fmt.Sprintf("worker %d failed", index))
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return err
+			}
+		},
+	)
+
+	for _, c := range counts {
+		if c != 1 {
+			t.Fatalf("Worker %d has not completed", c)
+		}
+	}
+
+	if err == nil {
+		t.Fatal("Work group error is nil")
+	}
+	if err, ok := err.(*PanicError); ok {
+		if err.Error() != "panic: worker 500 failed" {
+			t.Fatalf("Work group panic error value incorrect")
+		}
+	} else {
+		t.Errorf("Work group error is not a PanicError")
+	}
+}
+
+func TestRepanicManager(t *testing.T) {
+
+	counts := make([]int, 10000)
+
+	defer func() {
+		for _, c := range counts {
+			if c != 1 {
+				t.Fatalf("Worker %d has not completed", c)
+			}
+		}
+
+		if v := recover(); v != nil {
+			if v != "worker 500 failed" {
+				t.Fatalf("Work group panic value incorrect")
+			}
+		} else {
+			t.Fatalf("Work group did not panic")
+		}
+	}()
+
+	m := Repanic(CancelOnFirstError())
+
+	WorkFor(context.Background(), len(counts), NewUnlimited(), m,
+		func(ctx Ctx, index int) (err error) {
+			time.Sleep(time.Millisecond)
+			counts[index]++
+
+			if index == 500 {
+				panic(fmt.Sprintf("worker %d failed", index))
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return err
+			}
+		},
+	)
 }
