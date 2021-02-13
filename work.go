@@ -69,7 +69,7 @@ func Group(e Executer, m Manager, g ...Worker) Worker {
 // WorkFor arranges for the worker, w, to be executed n times
 // and waits for these workers to complete before returning.
 // See documention for Work() for details.
-func WorkFor(ctx Ctx, n int, e Executer, m Manager, w IdxWorker) error {
+func WorkFor(ctx Ctx, e Executer, m Manager, n int, w IdxWorker) error {
 	if ctx == nil {
 		ctx = context.TODO()
 	}
@@ -106,9 +106,9 @@ func WorkFor(ctx Ctx, n int, e Executer, m Manager, w IdxWorker) error {
 
 // GroupFor returns a worker that immediately calls the
 // WorkFor() function to execute the worker n times.
-func GroupFor(n int, e Executer, m Manager, w IdxWorker) Worker {
+func GroupFor(e Executer, m Manager, n int, w IdxWorker) Worker {
 	return func(ctx Ctx) error {
-		return WorkFor(ctx, n, e, m, w)
+		return WorkFor(ctx, e, m, n, w)
 	}
 }
 
