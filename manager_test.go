@@ -9,8 +9,8 @@ type AccumulateManager struct {
 	Errors  []error
 }
 
-func (m *AccumulateManager) Result() error {
-	return m.manager.Result()
+func (m *AccumulateManager) Error() error {
+	return m.manager.Error()
 }
 
 func (m *AccumulateManager) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
