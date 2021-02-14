@@ -7,7 +7,7 @@ import (
 )
 
 // DefaultManager is a function that provides the default manager.
-var DefaultManager = CancelNeverFirstError
+var DefaultManager = CancelOnFirstError
 
 // Canceller cancels the work context.
 type Canceller interface {
