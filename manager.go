@@ -1,6 +1,7 @@
 package workgroup
 
 import (
+	"context"
 	"errors"
 	"sync"
 )
@@ -27,7 +28,7 @@ type Manager interface {
 	// of the work group. The index of completed worker
 	// is provided along with its error. This function
 	// is expected to return the number of completed workers.
-	Manage(ctx Ctx, c Canceller, idx int, err *error) int
+	Manage(ctx context.Context, c Canceller, idx int, err *error) int
 
 	// Error returns the final error of this work group.
 	Error() error
@@ -53,7 +54,7 @@ func (m *firstError) Error() error {
 	return m.err
 }
 
-func (m *firstError) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+func (m *firstError) Manage(ctx context.Context, c Canceller, idx int, err *error) int {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -90,7 +91,7 @@ func (m *firstSuccess) Error() error {
 	return m.err
 }
 
-func (m *firstSuccess) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+func (m *firstSuccess) Manage(ctx context.Context, c Canceller, idx int, err *error) int {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -129,7 +130,7 @@ func (m *firstDone) Error() error {
 	return m.result
 }
 
-func (m *firstDone) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+func (m *firstDone) Manage(ctx context.Context, c Canceller, idx int, err *error) int {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -161,7 +162,7 @@ func (m *neverFirstError) Error() error {
 	return m.err
 }
 
-func (m *neverFirstError) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+func (m *neverFirstError) Manage(ctx context.Context, c Canceller, idx int, err *error) int {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -227,7 +228,7 @@ func (w *recoverWrapper) Error() error {
 	return err
 }
 
-func (w *recoverWrapper) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+func (w *recoverWrapper) Manage(ctx context.Context, c Canceller, idx int, err *error) int {
 	if v := recover(); v != nil {
 		*err = &PanicError{Value: v}
 	}

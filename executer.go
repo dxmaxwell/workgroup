@@ -1,6 +1,7 @@
 package workgroup
 
 import (
+	"context"
 	"runtime"
 )
 
@@ -14,7 +15,7 @@ var DefaultExecuter = NewUnlimited
 
 // Executer arranges for function, f, to executed.
 type Executer interface {
-	Execute(ctx Ctx, f func(ctx Ctx))
+	Execute(ctx context.Context, f func(ctx context.Context))
 }
 
 type unlimited struct{}
@@ -25,7 +26,7 @@ func NewUnlimited() Executer {
 	return &unlimited{}
 }
 
-func (u *unlimited) Execute(ctx Ctx, f func(Ctx)) {
+func (u *unlimited) Execute(ctx context.Context, f func(context.Context)) {
 	go f(ctx)
 }
 
@@ -56,7 +57,7 @@ func (l *limited) done() {
 	<-l.ch
 }
 
-func (l *limited) Execute(ctx Ctx, f func(Ctx)) {
+func (l *limited) Execute(ctx context.Context, f func(context.Context)) {
 	l.add()
 	go func() {
 		defer l.done()
@@ -73,7 +74,7 @@ type pool struct {
 // the values in DefaultLimit is used. Note that the provided
 // context must be cancelled to ensure that the pool releases
 // all resources.
-func NewPool(ctx Ctx, n int) Executer {
+func NewPool(ctx context.Context, n int) Executer {
 	if n <= 0 {
 		n = DefaultLimit
 	}
@@ -102,6 +103,6 @@ func NewPool(ctx Ctx, n int) Executer {
 	return p
 }
 
-func (p *pool) Execute(ctx Ctx, f func(Ctx)) {
+func (p *pool) Execute(ctx context.Context, f func(context.Context)) {
 	p.ch <- func() { f(ctx) }
 }

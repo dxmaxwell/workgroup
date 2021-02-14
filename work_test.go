@@ -13,7 +13,7 @@ func TestSimpleWork(t *testing.T) {
 	workers := make([]Worker, len(counts))
 	for i := 0; i < len(counts); i++ {
 		index := i
-		workers[i] = func(ctx Ctx) error {
+		workers[i] = func(ctx context.Context) error {
 			time.Sleep(time.Millisecond)
 			counts[index]++
 			return nil
@@ -34,7 +34,7 @@ func TestSimpleWorkFor(t *testing.T) {
 	counts := make([]int, 10000)
 
 	WorkFor(nil, nil, nil, len(counts),
-		func(ctx Ctx, index int) error {
+		func(ctx context.Context, index int) error {
 			time.Sleep(time.Millisecond)
 			counts[index]++
 			return nil
@@ -55,7 +55,7 @@ func TestSimpleWorkChan(t *testing.T) {
 	go func() {
 		for i := 0; i < len(counts); i++ {
 			index := i
-			workers <- func(ctx Ctx) error {
+			workers <- func(ctx context.Context) error {
 				time.Sleep(time.Millisecond)
 				counts[index]++
 				return nil
@@ -79,7 +79,7 @@ func TestLimitedWorkFor(t *testing.T) {
 	tokens := make(chan struct{}, 8)
 
 	WorkFor(context.Background(), NewLimited(8), CancelNeverFirstError(), len(counts),
-		func(ctx Ctx, index int) error {
+		func(ctx context.Context, index int) error {
 			select {
 			case tokens <- struct{}{}:
 				break
@@ -116,7 +116,7 @@ func TestPoolWorkFor(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	WorkFor(ctx, NewPool(ctx, 8), CancelNeverFirstError(), len(counts),
-		func(ctx Ctx, index int) error {
+		func(ctx context.Context, index int) error {
 			select {
 			case tokens <- struct{}{}:
 				break
@@ -156,7 +156,7 @@ func TestCancelNeverFirstError(t *testing.T) {
 	}
 
 	err := WorkFor(context.Background(), NewUnlimited(), m, len(counts),
-		func(ctx Ctx, index int) (err error) {
+		func(ctx context.Context, index int) (err error) {
 			time.Sleep(time.Millisecond)
 			counts[index]++
 
@@ -202,7 +202,7 @@ func TestCancelOnFirstError(t *testing.T) {
 	}
 
 	err := WorkFor(context.Background(), NewUnlimited(), m, len(counts),
-		func(ctx Ctx, index int) (err error) {
+		func(ctx context.Context, index int) (err error) {
 			time.Sleep(time.Millisecond)
 			counts[index]++
 
@@ -257,7 +257,7 @@ func TestCancelOnFirstSuccess(t *testing.T) {
 	}
 
 	err := WorkFor(context.Background(), NewUnlimited(), m, len(counts),
-		func(ctx Ctx, index int) (err error) {
+		func(ctx context.Context, index int) (err error) {
 			time.Sleep(time.Millisecond)
 			counts[index]++
 
@@ -313,7 +313,7 @@ func TestCancelOnFirstComplete(t *testing.T) {
 	}
 
 	err := WorkFor(context.Background(), NewUnlimited(), m, len(counts),
-		func(ctx Ctx, index int) (err error) {
+		func(ctx context.Context, index int) (err error) {
 			time.Sleep(time.Millisecond)
 			counts[index]++
 
@@ -355,7 +355,7 @@ func TestRecoverManager(t *testing.T) {
 	m := Recover(CancelOnFirstError())
 
 	err := WorkFor(context.Background(), NewUnlimited(), m, len(counts),
-		func(ctx Ctx, index int) (err error) {
+		func(ctx context.Context, index int) (err error) {
 			time.Sleep(time.Millisecond)
 			counts[index]++
 
@@ -413,7 +413,7 @@ func TestRepanicManager(t *testing.T) {
 	m := Repanic(CancelOnFirstError())
 
 	WorkFor(context.Background(), NewUnlimited(), m, len(counts),
-		func(ctx Ctx, index int) (err error) {
+		func(ctx context.Context, index int) (err error) {
 			time.Sleep(time.Millisecond)
 			counts[index]++
 

@@ -1,6 +1,9 @@
 package workgroup
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // AccumulateManager is used only for testing (for now)
 type AccumulateManager struct {
@@ -13,7 +16,7 @@ func (m *AccumulateManager) Error() error {
 	return m.manager.Error()
 }
 
-func (m *AccumulateManager) Manage(ctx Ctx, c Canceller, idx int, err *error) int {
+func (m *AccumulateManager) Manage(ctx context.Context, c Canceller, idx int, err *error) int {
 	n := m.manager.Manage(ctx, c, idx, err)
 
 	m.mutex.Lock()
